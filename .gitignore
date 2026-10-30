@@ -1,2 +1,8 @@
 .DS_Store
 .idea/
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/sdkconfig.defaults.local
+firmware/sim_quota/build/
+firmware/sim_quota/testdata/

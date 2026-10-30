@@ -1005,3 +1005,59 @@ menu "BLE prph Configuration"
             Use this option to enable resolving peer's address.
 
 endmenu
+
+menu "AI Quota"
+
+    config QUOTA_MAGPIE_URL
+        string "Magpie gateway base URL"
+        default "https://magpie-direct.119932.xyz:42796"
+        help
+            Base URL of the Magpie gateway, e.g. https://host:port
+            Leave empty to disable this source.
+
+    config QUOTA_MAGPIE_KEY
+        string "Magpie gateway API key"
+        default ""
+        help
+            Bearer key for the Magpie gateway. Prefer setting it in
+            sdkconfig.defaults.local (not committed).
+
+    config QUOTA_CPAMGR_URL
+        string "cpamgr base URL"
+        default ""
+        help
+            Base URL of cpamgr, e.g. https://cpamgr.example.com
+            Leave empty to disable this source.
+
+    config QUOTA_CPAMGR_KEY
+        string "cpamgr management key"
+        default ""
+
+    config QUOTA_CPAMGR_BF_PATH
+        string "Second cpamgr instance relay path"
+        default ""
+        help
+            Extra path on the same relay host exposing a second cpamgr
+            instance, e.g. /quota-bf. Leave empty to disable.
+
+    config QUOTA_MAGPIE_EXCLUDE
+        string "Magpie providers to hide"
+        default ""
+        help
+            Comma-separated substrings matched (case-insensitive) against
+            provider names, e.g. "OpenCode Zen". Matching cards are hidden.
+
+    config QUOTA_CPAMGR_CF_ID
+        string "Cloudflare Access service token client id"
+        default ""
+
+    config QUOTA_CPAMGR_CF_SECRET
+        string "Cloudflare Access service token client secret"
+        default ""
+
+    config QUOTA_REFRESH_SEC
+        int "Refresh interval (seconds)"
+        default 60
+        range 10 3600
+
+endmenu
