@@ -66,6 +66,22 @@ quota::QuotaView::QuotaView()
 
     _hide_timer = lv_timer_create(_onHideTimer, 3000, this);
     lv_timer_pause(_hide_timer);
+
+    // Detail overlay — hidden until a card is tapped
+    _detail = lv_obj_create(_root);
+    lv_obj_set_size(_detail, 320, 240);
+    lv_obj_set_pos(_detail, 0, 0);
+    lv_obj_set_style_bg_color(_detail, COL_BG, 0);
+    lv_obj_set_style_bg_opa(_detail, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_detail, 0, 0);
+    lv_obj_set_style_pad_all(_detail, 8, 0);
+    lv_obj_set_flex_flow(_detail, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(_detail, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(_detail, 5, 0);
+    lv_obj_set_scroll_dir(_detail, LV_DIR_VER);
+    lv_obj_add_flag(_detail, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_detail, _onDetailClicked, LV_EVENT_CLICKED, this);
+    lv_obj_add_flag(_detail, LV_OBJ_FLAG_HIDDEN);
 }
 
 quota::QuotaView::~QuotaView()
@@ -85,6 +101,32 @@ void quota::QuotaView::_onHideTimer(lv_timer_t* t)
     auto* self = static_cast<QuotaView*>(lv_timer_get_user_data(t));
     lv_timer_pause(t);
     if (self->_status) lv_obj_add_flag(self->_status, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Children capture the indev hit — without EVENT_BUBBLE their CLICKED
+// events never reach the card/detail parent (that's why taps seemed flaky).
+static void _bubbleAll(lv_obj_t* obj)
+{
+    uint32_t n = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* c = lv_obj_get_child(obj, i);
+        lv_obj_add_flag(c, LV_OBJ_FLAG_EVENT_BUBBLE);
+        _bubbleAll(c);
+    }
+}
+
+void quota::QuotaView::_onCardClicked(lv_event_t* e)
+{
+    auto* self = static_cast<QuotaView*>(lv_event_get_user_data(e));
+    lv_obj_t* obj = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+    size_t i = (size_t)(uintptr_t)lv_obj_get_user_data(obj);
+    if (i < self->_snap.cards.size()) self->showCardDetail(self->_snap.cards[i]);
+}
+
+void quota::QuotaView::_onDetailClicked(lv_event_t* e)
+{
+    auto* self = static_cast<QuotaView*>(lv_event_get_user_data(e));
+    self->closeDetail();
 }
 
 void quota::QuotaView::_clear()
@@ -126,7 +168,7 @@ void quota::QuotaView::showError(const std::string& msg)
 }
 
 lv_obj_t* quota::QuotaView::_makeWindowRow(lv_obj_t* parent, const Window& win,
-                                          const std::string& right)
+                                          const std::string& right, int bar_w)
 {
     lv_obj_t* row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
@@ -157,7 +199,7 @@ lv_obj_t* quota::QuotaView::_makeWindowRow(lv_obj_t* parent, const Window& win,
     if (win.percent >= 0) {
         // progress track
         lv_obj_t* bar = lv_bar_create(row);
-        lv_obj_set_size(bar, 48, 4);
+        lv_obj_set_size(bar, bar_w, 4);
         lv_bar_set_range(bar, 0, 100);
         lv_bar_set_value(bar, (int32_t)win.percent, LV_ANIM_OFF);
         lv_obj_set_style_bg_color(bar, COL_TRACK, LV_PART_MAIN);
@@ -192,9 +234,12 @@ lv_obj_t* quota::QuotaView::_makeWindowRow(lv_obj_t* parent, const Window& win,
     return row;
 }
 
-lv_obj_t* quota::QuotaView::_makeCard(const Card& card)
+lv_obj_t* quota::QuotaView::_makeCard(const Card& card, size_t idx)
 {
     lv_obj_t* box = lv_obj_create(_list);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_user_data(box, (void*)(uintptr_t)idx);
+    lv_obj_add_event_cb(box, _onCardClicked, LV_EVENT_CLICKED, this);
     lv_obj_set_width(box, LV_PCT(100));
     lv_obj_set_height(box, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(box, COL_CARD, 0);
@@ -239,20 +284,86 @@ lv_obj_t* quota::QuotaView::_makeCard(const Card& card)
         lv_obj_set_style_text_align(e, LV_TEXT_ALIGN_RIGHT, 0);
     }
 
+    _bubbleAll(box);
     return box;
 }
 
 void quota::QuotaView::showSnapshot(const Snapshot& snap)
 {
+    _snap = snap;
+    closeDetail();
     _clear();
     if (!snap.error.empty()) {
         showError(snap.error);
         if (snap.cards.empty()) return;
     }
-    for (const auto& card : snap.cards) {
-        _makeCard(card);
+    for (size_t i = 0; i < snap.cards.size(); i++) {
+        _makeCard(snap.cards[i], i);
     }
     if (snap.cards.empty() && snap.error.empty()) {
         showLoading("no quota sources");
     }
+}
+
+void quota::QuotaView::showCardDetail(const Card& card)
+{
+    lv_obj_clean(_detail);
+
+    // provider name — big, wraps/scrolls if long
+    lv_obj_t* title = lv_label_create(_detail);
+    lv_label_set_text(title, card.name.c_str());
+    lv_obj_set_style_text_font(title, &font_puhui_basic_20_4, 0);
+    lv_obj_set_style_text_color(title, COL_TEXT, 0);
+    lv_obj_set_width(title, 288);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_SCROLL_CIRCULAR);
+
+    // plan + source subtitle
+    std::string sub;
+    if (!card.user.empty()) sub = card.user;
+    if (!card.source.empty()) { if (!sub.empty()) sub += " / "; sub += card.source; }
+    if (!sub.empty()) {
+        lv_obj_t* s = lv_label_create(_detail);
+        lv_label_set_text(s, sub.c_str());
+        lv_obj_set_style_text_font(s, QUOTA_FONT_M, 0);
+        lv_obj_set_style_text_color(s, COL_MUTED, 0);
+    }
+
+    if (!card.error.empty()) {
+        lv_obj_t* e = lv_label_create(_detail);
+        lv_label_set_text(e, card.error.c_str());
+        lv_obj_set_style_text_font(e, QUOTA_FONT, 0);
+        lv_obj_set_style_text_color(e, COL_DANGER, 0);
+    }
+
+    // every window gets its reset time back — the compact list's row-0
+    // sacrifice is restored here
+    for (const auto& w : card.windows) {
+        _makeWindowRow(_detail, w, w.resetsAt, 120);
+    }
+    if (card.windows.empty() && card.error.empty()) {
+        lv_obj_t* e = lv_label_create(_detail);
+        lv_label_set_text(e, "no windows");
+        lv_obj_set_style_text_font(e, QUOTA_FONT, 0);
+        lv_obj_set_style_text_color(e, COL_MUTED, 0);
+    }
+
+    // spacer pushes hint to bottom
+    lv_obj_t* spacer = lv_obj_create(_detail);
+    lv_obj_set_size(spacer, 1, 1);
+    lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spacer, 0, 0);
+    lv_obj_set_flex_grow(spacer, 1);
+
+    lv_obj_t* hint = lv_label_create(_detail);
+    lv_label_set_text(hint, "tap to return");
+    lv_obj_set_style_text_font(hint, QUOTA_FONT_M, 0);
+    lv_obj_set_style_text_color(hint, COL_MUTED, 0);
+
+    _bubbleAll(_detail);
+    lv_obj_remove_flag(_detail, LV_OBJ_FLAG_HIDDEN);
+}
+
+void quota::QuotaView::closeDetail()
+{
+    if (_detail) lv_obj_add_flag(_detail, LV_OBJ_FLAG_HIDDEN);
 }

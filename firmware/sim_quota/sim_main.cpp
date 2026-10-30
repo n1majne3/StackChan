@@ -163,6 +163,14 @@ int main(int argc, char** argv)
         if (!applied && frames == 30) {
             view.showSnapshot(snap);
             view.setStatusText("updated 14:40");
+            // --detail N: open card N's detail overlay right before the shot
+            for (int i = 1; i < argc; i++) {
+                if (strcmp(argv[i], "--detail") == 0 && i + 1 < argc) {
+                    int n = atoi(argv[i + 1]);
+                    if (n >= 0 && (size_t)n < snap.cards.size())
+                        view.showCardDetail(snap.cards[n]);
+                }
+            }
             applied = true;
         }
         if (!dumped && frames == 120) {
