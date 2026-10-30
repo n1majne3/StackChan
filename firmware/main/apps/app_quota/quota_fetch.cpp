@@ -281,6 +281,15 @@ static void _cpamgrWindow(cJSON* signals, const char* prefix, const char* fallba
     card.windows.push_back(std::move(win));
 }
 
+// "90-grade.trapper@icloud.com" -> "90-g***@icloud.com"
+static std::string _maskEmail(const std::string& s)
+{
+    size_t at = s.find('@');
+    if (at == std::string::npos || at == 0) return s;
+    size_t keep = at > 4 ? 4 : (at > 2 ? at - 1 : 1);
+    return s.substr(0, keep) + "***" + s.substr(at);
+}
+
 static void _parseCpamgr(const std::string& body, std::vector<quota::Card>& out, std::string& err)
 {
     cJSON* root = cJSON_Parse(body.c_str());
@@ -310,7 +319,7 @@ static void _parseCpamgr(const std::string& body, std::vector<quota::Card>& out,
 
         quota::Card card;
         card.source = "cpamgr";
-        card.name   = _jstr(f, "account");
+        card.name   = _maskEmail(_jstr(f, "account"));
         if (card.name.empty()) card.name = _jstr(f, "label");
         std::string plan = _sig(signals, "X-Codex-Plan-Type");
         if (plan.empty()) plan = _jstr(f, "provider");
