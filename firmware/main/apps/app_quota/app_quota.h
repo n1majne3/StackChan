@@ -6,16 +6,14 @@
 #pragma once
 #include "quota_view.h"
 #include <mooncake.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <atomic>
+#include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
 
 /**
- * @brief AI quota app — shows subscription quota remaining fetched
- *        from configured HTTP endpoints (magpie / cpamgr).
+ * @brief AI quota app — full-screen view of the shared QuotaService snapshot.
+ *        Fetching itself lives in quota::QuotaService so data keeps refreshing
+ *        while this app is closed or the XiaoZhi agent is running.
  */
 class AppQuota : public mooncake::AppAbility {
 public:
@@ -28,17 +26,8 @@ public:
 
 private:
     std::unique_ptr<quota::QuotaView> _view;
+    uint32_t _seen_revision = 0;
+    std::string _seen_status;
 
-    // fetch worker
-    std::atomic<bool> _stop_fetch{false};
-    std::atomic<bool> _fetch_done{false};
-    TaskHandle_t _fetch_task = nullptr;
-    quota::Snapshot _pending;
-    std::mutex _pending_mtx;
-    bool _fetch_running = false;
-    uint32_t _next_refresh_ms = 0;
-
-    void _startFetch();
-    void _joinFetch();
-    void _applyPending();
+    void _renderSnapshot(const quota::Snapshot& snap);
 };

@@ -12,10 +12,13 @@
 #include <assets/assets.h>
 #include <fmt/chrono.h>
 #include <hal/hal.h>
+#include <hal/board/hal_bridge.h>
 #include <memory>
 #include <vector>
 #include <lvgl.h>
 #include <src/draw/lv_image_dsc.h>
+#include "apps/app_quota/quota_cache.h"
+#include <ctime>
 
 using namespace smooth_ui_toolkit;
 using namespace smooth_ui_toolkit::lvgl_cpp;
@@ -94,8 +97,10 @@ namespace status_bar_view {
 
 class Widget {
 public:
-    virtual ~Widget()     = default;
-    virtual void update() = 0;
+    virtual ~Widget()              = default;
+    virtual void update()          = 0;
+    virtual void onParentHide()    {}
+    virtual void onParentShow()    {}
 };
 
 class TimeLabel : public Widget {
@@ -276,6 +281,242 @@ private:
     lv_image_dsc_t _icon_wifi_slash;
 };
 
+/**
+ * @brief Quota summary widget — a small persistent pill at the screen's
+ *        bottom-right corner (xiaozhi mode only) cycling through providers'
+ *        worst remaining window every few seconds; tap it to expand a
+ *        per-provider detail list anchored
+ *        just above it. Data is the NVS summary the Quota app saved — the
+ *        agent can't afford fetching itself (internal heap is ~27KB with no
+ *        headroom; a live fetch broke voice). In mooncake apps the widget
+ *        stays hidden and the status bar looks stock.
+ */
+class QuotaWidget : public Widget {
+public:
+    QuotaWidget(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary)
+        : _color_secondary(colorSecondary), _color_primary(colorPrimary)
+    {
+        _pill = std::make_unique<Container>(lv_screen_active());
+        _pill->setSize(LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        _pill->setRadius(10);
+        _pill->setBgColor(lv_color_hex(colorPrimary));
+        _pill->setBgOpa(LV_OPA_60);
+        _pill->setBorderWidth(0);
+        _pill->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
+        _pill->setPadding(2, 2, 8, 8);
+        _pill->align(LV_ALIGN_BOTTOM_RIGHT, -4, -2);
+        _pill->setHidden(true);
+        _pill->onClick().connect([this]() { toggleDetail(); });
+
+        _pill_label = std::make_unique<Label>(_pill->get());
+        _pill_label->setText("");
+        _pill_label->setTextColor(lv_color_hex(colorSecondary));
+        _pill_label->setTextFont(&lv_font_montserrat_14);
+        _pill_label->align(LV_ALIGN_CENTER, 0, 0);
+
+        _detail = std::make_unique<Container>(lv_screen_active());
+        _detail->setSize(320, 146);
+        _detail->setPos(0, 240 - 146 - 28);
+        _detail->setBgColor(lv_color_hex(colorSecondary));
+        _detail->setBgOpa(LV_OPA_COVER);
+        _detail->setBorderWidth(0);
+        _detail->setRadius(0);
+        _detail->setPadding(6, 10, 6, 6);
+        lv_obj_set_flex_flow(_detail->get(), LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(_detail->get(), LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+        _detail->setHidden(true);
+        _detail->onClick().connect([this]() { _hideDetail(); });
+
+        update();
+    }
+
+    void toggleDetail()
+    {
+        if (lv_obj_has_flag(_detail->get(), LV_OBJ_FLAG_HIDDEN)) {
+            _showDetail();
+        } else {
+            _hideDetail();
+        }
+    }
+
+    void onParentHide() override
+    {
+        _hideDetail();
+    }
+
+    void update() override
+    {
+        // Persistent pill only makes sense on the xiaozhi face — inside
+        // mooncake apps the widget would float over unrelated content.
+        bool in_agent = hal_bridge::is_xiaozhi_mode();
+        if (in_agent != _pill_visible) {
+            _pill_visible = in_agent;
+            _pill->setHidden(!in_agent);
+            if (!in_agent) _hideDetail();
+        }
+        if (!in_agent) return;
+
+        // Cache only changes when the Quota app runs (mooncake, separate
+        // boot), so one NVS read per agent session is enough.
+        if (!_loaded) {
+            _cache  = quota::loadCache();
+            _loaded = true;
+        }
+
+        // Texts (with age suffix) are rebuilt at most once a minute; between
+        // rebuilds the pill only steps through them — no heap churn on the
+        // 1Hz widget tick beyond LVGL's copy when the shown text changes.
+        const time_t now     = time(nullptr);
+        const int64_t minute = now / 60;
+        if (minute != _last_minute) {
+            _last_minute = minute;
+            _rebuildPillTexts();
+        }
+
+        // Rotate through providers so every one gets screen time.
+        const size_t idx = _pill_texts.size() > 1 ? (size_t)(now / _rotate_sec) % _pill_texts.size() : 0;
+        const std::string& text = _pill_texts[idx];
+        if (text != _pill_text) {
+            _pill_text = text;
+            _pill_label->setText(text);
+        }
+    }
+
+private:
+    static constexpr int _rotate_sec = 5;
+
+    void _rebuildPillTexts()
+    {
+        _pill_texts.clear();
+        const std::string age = _ageText();
+        for (const auto& c : _cache.cards) {
+            std::string t = _shortName(c.name, 8);
+            if (c.error) {
+                t += " err";
+            } else if (c.percent >= 0) {
+                t += fmt::format(" {}%", c.percent);
+            } else {
+                t += " --";
+            }
+            if (!age.empty()) t += " " + age;
+            _pill_texts.push_back(std::move(t));
+        }
+        if (_pill_texts.empty()) _pill_texts.push_back("quota --");
+    }
+
+    // "5m" / "3h" / "2d"; empty if the clock or fetch time is unknown.
+    std::string _ageText() const
+    {
+        const time_t now = time(nullptr);
+        if (_cache.fetchedAt <= 0 || now < 1700000000 || now < _cache.fetchedAt) return "";
+        const int64_t mins = (now - _cache.fetchedAt) / 60;
+        if (mins < 60) return fmt::format("{}m", mins);
+        if (mins < 48 * 60) return fmt::format("{}h", mins / 60);
+        return fmt::format("{}d", mins / (24 * 60));
+    }
+
+    void _showDetail()
+    {
+        _rebuildDetail();
+        _detail->moveForeground();
+        _detail->setHidden(false);
+    }
+
+    void _hideDetail()
+    {
+        if (!lv_obj_has_flag(_detail->get(), LV_OBJ_FLAG_HIDDEN)) {
+            _detail->setHidden(true);
+        }
+    }
+
+    // Provider names can be long — keep chunks compact so the centered clock
+    // isn't touched (bar is only 320px wide); detail rows can afford more.
+    static std::string _shortName(const std::string& name, size_t maxLen)
+    {
+        return name.size() <= maxLen ? name : name.substr(0, maxLen);
+    }
+
+    void _rebuildDetail()
+    {
+        _clearRows();
+
+        if (_cache.empty()) {
+            _rowText(_makeRow(), "No data - open Quota app", "");
+            return;
+        }
+
+        for (const auto& c : _cache.cards) {
+            auto* row = _makeRow();
+            if (c.error) {
+                _rowText(row, _shortName(c.name, 18), "err");
+            } else if (c.percent >= 0) {
+                _rowText(row, _shortName(c.name, 18), fmt::format("{} {}%", c.window, c.percent));
+            } else {
+                _rowText(row, _shortName(c.name, 18), "--");
+            }
+        }
+        std::string age = _ageText();
+        if (!age.empty()) {
+            _rowText(_makeRow(), "updated " + age + " ago", "");
+        }
+    }
+
+    lv_obj_t* _makeRow()
+    {
+        auto row = std::make_unique<Container>(_detail->get());
+        row->setSize(300, LV_SIZE_CONTENT);
+        row->setBgOpa(LV_OPA_TRANSP);
+        row->setBorderWidth(0);
+        row->setRadius(0);
+        row->setPadding(0, 0, 0, 0);
+        row->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_flex_flow(row->get(), LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row->get(), LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        _rows.push_back(std::move(row));
+        return _rows.back()->get();
+    }
+
+    void _rowText(lv_obj_t* row, const std::string& left, const std::string& right)
+    {
+        auto l = std::make_unique<Label>(row);
+        l->setText(left);
+        l->setTextColor(lv_color_hex(_color_primary));
+        l->setTextFont(&lv_font_montserrat_14);
+        lv_obj_set_flex_grow(l->get(), 1);
+
+        auto r = std::make_unique<Label>(row);
+        r->setText(right);
+        r->setTextColor(lv_color_hex(_color_primary));
+        r->setTextFont(&lv_font_montserrat_14);
+        r->align(LV_ALIGN_RIGHT_MID, 0, 0);
+
+        _row_labels.push_back(std::move(l));
+        _row_labels.push_back(std::move(r));
+    }
+
+    void _clearRows()
+    {
+        // Labels must die before their row parents — LVGL frees a container's
+        // children with it, so clearing rows first would leave dangling labels.
+        _row_labels.clear();
+        _rows.clear();
+    }
+
+    std::unique_ptr<Container> _pill;
+    std::unique_ptr<Label> _pill_label;
+    std::unique_ptr<Container> _detail;
+    std::vector<std::unique_ptr<Container>> _rows;
+    std::vector<std::unique_ptr<Label>> _row_labels;
+    bool _pill_visible   = false;
+    bool _loaded         = false;
+    int64_t _last_minute = -1;
+    quota::CachedSummary _cache;
+    std::string _pill_text;
+    std::vector<std::string> _pill_texts;
+    uint32_t _color_secondary;
+    uint32_t _color_primary;
+};
+
 class StatusBarView {
 public:
     StatusBarView(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary)
@@ -293,6 +534,7 @@ public:
         _widgets.push_back(std::make_unique<TimeLabel>(_panel->get(), colorPrimary));
         _widgets.push_back(std::make_unique<Battery>(_panel->get(), colorSecondary, colorPrimary));
         _widgets.push_back(std::make_unique<Wifi>(_panel->get(), colorPrimary));
+        _widgets.push_back(std::make_unique<QuotaWidget>(_panel->get(), colorSecondary, colorPrimary));
 
         _panel->setPos(0, _pos_y_hide);
         _pos_y_anim.springOptions().bounce         = 0.1;
@@ -331,6 +573,9 @@ public:
 
     void hide()
     {
+        for (auto& widget : _widgets) {
+            widget->onParentHide();
+        }
         _pos_y_anim      = _pos_y_hide;
         _is_hidden       = true;
         _hide_panel_flag = true;
