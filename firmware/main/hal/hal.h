@@ -272,6 +272,10 @@ public:
     void requestWarmReboot(int appIndex);
     int getWarmRebootTarget();
     void clearWarmRebootRequest();
+    /// Reboot straight into the xiaozhi agent (skipping mooncake) once.
+    void requestAgentBoot();
+    /// Returns true (and clears the flag) if an agent boot was requested.
+    bool consumeAgentBootRequest();
     [[noreturn]] void requestAppSetup();
     bool consumeAppSetupRequest();
 

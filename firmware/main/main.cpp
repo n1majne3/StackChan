@@ -27,7 +27,8 @@ extern "C" void app_main(void)
     ui_hal::on_get_tick([]() { return GetHAL().millis(); });
 
     const bool skip_mooncake =
-        GetHAL().getXiaozhiConfig().startAiAgentOnBoot && GetHAL().getWarmRebootTarget() < 0;
+        GetHAL().consumeAgentBootRequest() ||
+        (GetHAL().getXiaozhiConfig().startAiAgentOnBoot && GetHAL().getWarmRebootTarget() < 0);
 
     if (!skip_mooncake) {
         // Install apps

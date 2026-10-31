@@ -344,6 +344,37 @@ int Hal::getWarmRebootTarget()
     return settings.GetInt(_warm_boot_nvs_key.data(), -1);
 }
 
+static std::string_view _agent_boot_nvs_key = "agent_boot";
+
+// Starting xiaozhi in-process after mooncake leaves the internal heap too
+// fragmented/drained (free ~12KB, min ~2.5KB): UDP audio sends fail with
+// ENOMEM and voice breaks. A clean boot into the agent keeps ~100KB free.
+void Hal::requestAgentBoot()
+{
+    mclog::tagInfo(_tag, "reboot into ai agent");
+
+    {
+        Settings settings(_warm_boot_nvs_ns.data(), true);
+        settings.SetBool(_agent_boot_nvs_key.data(), true);
+    }
+
+    delay(100);
+    esp_restart();
+}
+
+bool Hal::consumeAgentBootRequest()
+{
+    {
+        Settings settings(_warm_boot_nvs_ns.data(), false);
+        if (!settings.GetBool(_agent_boot_nvs_key.data(), false)) {
+            return false;
+        }
+    }
+    Settings settings(_warm_boot_nvs_ns.data(), true);
+    settings.SetBool(_agent_boot_nvs_key.data(), false);
+    return true;
+}
+
 void Hal::clearWarmRebootRequest()
 {
     mclog::tagInfo(_tag, "clear warm reboot request");
