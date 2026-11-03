@@ -1,6 +1,7 @@
 .DS_Store
 .idea/
 firmware/build/
+firmware/build-host-tests/
 firmware/sdkconfig
 firmware/sdkconfig.old
 firmware/sdkconfig.defaults.local
