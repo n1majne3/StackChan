@@ -18,6 +18,7 @@
 #include <lvgl.h>
 #include <src/draw/lv_image_dsc.h>
 #include "apps/app_quota/quota_cache.h"
+#include "apps/app_quota/quota_agent.h"
 #include <ctime>
 
 using namespace smooth_ui_toolkit;
@@ -289,10 +290,11 @@ private:
  *        bubble and sliding down with the status bar when it's pulled down.
  *        It cycles through providers' worst remaining window every few
  *        seconds; tap it to expand a per-provider detail list anchored just
- *        below it. Data is the NVS summary the Quota app saved — the
- *        agent can't afford fetching itself (internal heap is ~27KB with no
- *        headroom; a live fetch broke voice). In mooncake apps the widget
- *        stays hidden and the status bar looks stock.
+ *        below it. Data starts as the NVS summary from the last fetch and is
+ *        refreshed in the background every CONFIG_QUOTA_AGENT_REFRESH_MIN
+ *        minutes by quota::agent_refresh, which only fetches while the agent
+ *        is idle and RAM allows. In mooncake apps the widget stays hidden and
+ *        the status bar looks stock.
  */
 class QuotaWidget : public Widget {
 public:
@@ -368,11 +370,16 @@ public:
         }
         if (!in_agent) return;
 
-        // Cache only changes when the Quota app runs (mooncake, separate
-        // boot), so one NVS read per agent session is enough.
+        // One NVS read per agent session; after that, background refreshes
+        // hand their summary over in memory.
         if (!_loaded) {
             _cache  = quota::loadCache();
             _loaded = true;
+        }
+        quota::agent_refresh::poll();
+        if (quota::agent_refresh::takeUpdate(_seen_revision, _cache)) {
+            _last_minute = -1;  // rebuild pill texts below
+            if (!lv_obj_has_flag(_detail->get(), LV_OBJ_FLAG_HIDDEN)) _rebuildDetail();
         }
 
         // Texts (with age suffix) are rebuilt at most once a minute; between
@@ -522,8 +529,9 @@ private:
     std::vector<std::unique_ptr<Container>> _rows;
     std::vector<std::unique_ptr<Label>> _row_labels;
     bool _pill_visible   = false;
-    bool _loaded         = false;
-    int64_t _last_minute = -1;
+    bool _loaded            = false;
+    uint32_t _seen_revision = 0;
+    int64_t _last_minute    = -1;
     quota::CachedSummary _cache;
     std::string _pill_text;
     std::vector<std::string> _pill_texts;

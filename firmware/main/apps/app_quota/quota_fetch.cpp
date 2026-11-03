@@ -15,6 +15,11 @@
 #include <string>
 
 #include <ctime>
+#include <functional>
+
+#ifdef ESP_PLATFORM
+#include <esp_heap_caps.h>
+#endif
 
 #ifndef CONFIG_QUOTA_PLANS_URL
 #define CONFIG_QUOTA_PLANS_URL ""
@@ -101,14 +106,21 @@ static bool _httpFetch(const std::string& url,
 
 // HTTP GET. Returns body, or empty string + out_err set on failure.
 // Bodies are capped at 256KB — anything larger is rejected as "body too large".
+// should_abort is checked per received chunk.
 static std::string _httpGet(const std::string& url,
                             const std::vector<std::pair<const char*, const char*>>& headers,
-                            std::string& out_err, int timeout_ms = 12000)
+                            std::string& out_err, int timeout_ms = 12000,
+                            const std::function<bool()>& should_abort = nullptr)
 {
     std::string body;
     bool too_large = false;
+    bool aborted   = false;
     if (!_httpFetch(url, headers, out_err, timeout_ms,
                     [&](const char* d, size_t n) {
+                        if (should_abort && should_abort()) {
+                            aborted = true;
+                            return false;
+                        }
                         if (body.size() + n > 256 * 1024) {
                             too_large = true;
                             return false;
@@ -117,6 +129,7 @@ static std::string _httpGet(const std::string& url,
                         return true;
                     })) {
         if (too_large) out_err = "body too large";
+        if (aborted) out_err = "aborted";
         return "";
     }
     if (body.empty()) {
@@ -365,8 +378,35 @@ static void _sortCards(std::vector<quota::Card>::iterator first, std::vector<quo
                      [&](const quota::Card& a, const quota::Card& b) { return min_remaining(a) < min_remaining(b); });
 }
 
+#ifdef ESP_PLATFORM
+// cJSON nodes are ~40 bytes, below CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL, so a
+// parsed summary would land entirely in internal RAM — the xiaozhi agent's
+// scarcest resource. Point cJSON at PSRAM for the parse. The hooks are
+// global, but every allocation stays free()-compatible, so a concurrent
+// xiaozhi parse at worst puts its own nodes in PSRAM too.
+static void* _psramMalloc(size_t n)
+{
+    return heap_caps_malloc_prefer(n, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_DEFAULT);
+}
+
+struct CjsonPsramScope {
+    CjsonPsramScope()
+    {
+        cJSON_Hooks hooks = {_psramMalloc, free};
+        cJSON_InitHooks(&hooks);
+    }
+    ~CjsonPsramScope()
+    {
+        cJSON_InitHooks(nullptr);
+    }
+};
+#else
+struct CjsonPsramScope {};
+#endif
+
 static void _parseSummary(const std::string& body, std::vector<quota::Card>& out, std::string& err)
 {
+    CjsonPsramScope psram;
     cJSON* root = cJSON_Parse(body.c_str());
     if (!root) {
         err = "bad json";
@@ -412,7 +452,8 @@ quota::Snapshot quota::fetchAll(std::function<void(const Snapshot&)> on_progress
         if (CONFIG_QUOTA_PLANS_TOKEN[0] != '\0') headers.push_back({"Authorization", bearer.c_str()});
 
         std::string err;
-        std::string body = _httpGet(std::string(CONFIG_QUOTA_PLANS_URL) + "/api/v1/summary", headers, err, 20000);
+        std::string body = _httpGet(std::string(CONFIG_QUOTA_PLANS_URL) + "/api/v1/summary", headers, err, 20000,
+                                    should_abort);
         if (err == "http 401") err = "token invalid (401)";
         else if (err == "http 403") err = "access denied (403)";
         if (err.empty()) _parseSummary(body, snap.cards, err);

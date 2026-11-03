@@ -18,7 +18,8 @@ namespace quota {
  * @brief Quota fetch service for the Quota app (mooncake mode only). Owns a
  *        FreeRTOS task that brings WiFi up and refreshes the snapshot on a
  *        fixed interval, saving a summary to NVS for the agent-face pill.
- *        Never runs in the xiaozhi agent: it has no internal heap to spare.
+ *        Never runs in the xiaozhi agent, which has little internal heap and
+ *        owns WiFi itself — quota::agent_refresh covers that mode.
  */
 class QuotaService {
 public:
