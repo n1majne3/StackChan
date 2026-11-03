@@ -101,6 +101,8 @@ public:
     virtual void update()          = 0;
     virtual void onParentHide()    {}
     virtual void onParentShow()    {}
+    // Called whenever the panel's bottom edge moves (0 when fully hidden).
+    virtual void onParentMoved(int panelBottomY) {}
 };
 
 class TimeLabel : public Widget {
@@ -283,10 +285,11 @@ private:
 
 /**
  * @brief Quota summary widget — a small persistent pill at the screen's
- *        bottom-right corner (xiaozhi mode only) cycling through providers'
- *        worst remaining window every few seconds; tap it to expand a
- *        per-provider detail list anchored
- *        just above it. Data is the NVS summary the Quota app saved — the
+ *        top-right corner (xiaozhi mode only), clear of the bottom subtitle
+ *        bubble and sliding down with the status bar when it's pulled down.
+ *        It cycles through providers' worst remaining window every few
+ *        seconds; tap it to expand a per-provider detail list anchored just
+ *        below it. Data is the NVS summary the Quota app saved — the
  *        agent can't afford fetching itself (internal heap is ~27KB with no
  *        headroom; a live fetch broke voice). In mooncake apps the widget
  *        stays hidden and the status bar looks stock.
@@ -304,7 +307,7 @@ public:
         _pill->setBorderWidth(0);
         _pill->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
         _pill->setPadding(2, 2, 8, 8);
-        _pill->align(LV_ALIGN_BOTTOM_RIGHT, -4, -2);
+        _pill->align(LV_ALIGN_TOP_RIGHT, -4, _pill_margin);
         _pill->setHidden(true);
         _pill->onClick().connect([this]() { toggleDetail(); });
 
@@ -316,7 +319,7 @@ public:
 
         _detail = std::make_unique<Container>(lv_screen_active());
         _detail->setSize(320, 146);
-        _detail->setPos(0, 240 - 146 - 28);
+        _detail->setPos(0, _pill_margin + _pill_h + 4);
         _detail->setBgColor(lv_color_hex(colorSecondary));
         _detail->setBgOpa(LV_OPA_COVER);
         _detail->setBorderWidth(0);
@@ -342,6 +345,15 @@ public:
     void onParentHide() override
     {
         _hideDetail();
+    }
+
+    // Ride just below the status bar while it slides in/out, and sit at the
+    // top-right corner when it's hidden.
+    void onParentMoved(int panelBottomY) override
+    {
+        const int y = (panelBottomY > 0 ? panelBottomY : 0) + _pill_margin;
+        _pill->align(LV_ALIGN_TOP_RIGHT, -4, y);
+        _detail->setPos(0, y + _pill_h + 4);
     }
 
     void update() override
@@ -383,7 +395,9 @@ public:
     }
 
 private:
-    static constexpr int _rotate_sec = 5;
+    static constexpr int _rotate_sec  = 5;
+    static constexpr int _pill_margin = 4;   // gap above the pill (screen top or status bar)
+    static constexpr int _pill_h      = 20;  // montserrat_14 line + 2px top/bottom padding
 
     void _rebuildPillTexts()
     {
@@ -548,7 +562,15 @@ public:
         _pos_y_anim.update();
         if (!_pos_y_anim.done()) {
             _panel->setPos(0, _pos_y_anim.directValue());
-        } else {
+        }
+        const int panel_bottom = lv_obj_get_y(_panel->get()) + 28;
+        if (panel_bottom != _last_panel_bottom) {
+            _last_panel_bottom = panel_bottom;
+            for (auto& widget : _widgets) {
+                widget->onParentMoved(panel_bottom);
+            }
+        }
+        if (_pos_y_anim.done()) {
             if (_hide_panel_flag) {
                 _hide_panel_flag = false;
                 _panel->setHidden(true);
@@ -596,6 +618,7 @@ private:
     bool _is_hidden            = false;
     bool _hide_panel_flag      = false;
     uint32_t _last_update_tick = 0;
+    int _last_panel_bottom     = -1;
 };
 
 }  // namespace status_bar_view
