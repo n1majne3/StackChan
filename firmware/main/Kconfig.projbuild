@@ -1010,7 +1010,7 @@ menu "AI Quota"
 
     config QUOTA_PLANS_URL
         string "Agent plans summary base URL"
-        default "https://plans.119932.xyz"
+        default ""
         help
             Origin without path — /api/v1/summary is appended. May point
             at a LAN relay exposing the same path. Leave empty to disable.
@@ -1039,8 +1039,31 @@ menu "AI Quota"
             entries are dropped.
 
     config QUOTA_REFRESH_SEC
-        int "Refresh interval (seconds)"
+        int "Quota app refresh interval (seconds)"
         default 60
         range 10 3600
+        help
+            How often the Quota app refetches while it is open.
+
+    config QUOTA_AGENT_REFRESH_MIN
+        int "Agent face refresh interval (minutes)"
+        default 30
+        range 0 1440
+        help
+            How often the AI agent refreshes the quota pill in the
+            background. A refresh only starts while the agent is idle,
+            WiFi is up and enough internal RAM is free; it aborts if a
+            conversation starts. 0 disables it (the pill then only
+            updates when the Quota app is opened).
+
+    config QUOTA_AGENT_MIN_FREE_INTERNAL
+        int "Agent refresh: minimum free internal RAM (bytes)"
+        default 24576
+        range 8192 131072
+        help
+            Skip an agent-mode refresh while free internal heap is below
+            this. The fetch keeps its stack, TLS buffers and JSON tree in
+            PSRAM; what remains in internal RAM is socket and WiFi
+            buffers. Each refresh logs heap before/after ("QuotaAgent").
 
 endmenu
