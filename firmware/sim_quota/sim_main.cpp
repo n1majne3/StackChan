@@ -30,29 +30,17 @@ static std::string slurp(const char* path)
     return ss.str();
 }
 
-// Real-data mode: parse actual API bodies captured in testdata/ through the
-// real parsers, so labels/exclusion logic is verified against live payloads.
+// Real-data mode: parse the captured /api/v1/summary body in testdata/
+// through the real parser, so labels/exclusion logic is verified against
+// a live payload shape.
 static quota::Snapshot makeRealSnapshot()
 {
     quota::Snapshot snap;
     std::string err;
-    std::string body;
 
-    body = slurp("testdata/magpie.json");
-    if (!body.empty()) _parseMagpie(body, snap.cards, err);
-
-    body = slurp("testdata/cpa_main.json");
-    if (!body.empty()) {
-        size_t before = snap.cards.size();
-        _parseCpamgr(body, snap.cards, err);
-        for (size_t i = before; i < snap.cards.size(); i++) snap.cards[i].source = "cpa";
-    }
-    body = slurp("testdata/cpa_bf.json");
-    if (!body.empty()) {
-        size_t before = snap.cards.size();
-        _parseCpamgr(body, snap.cards, err);
-        for (size_t i = before; i < snap.cards.size(); i++) snap.cards[i].source = "cpa-bf";
-    }
+    std::string body = slurp("testdata/summary.json");
+    if (!body.empty()) _parseSummary(body, snap.cards, err);
+    if (!err.empty()) snap.error = err;
     return snap;
 }
 

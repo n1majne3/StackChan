@@ -1008,52 +1008,35 @@ endmenu
 
 menu "AI Quota"
 
-    config QUOTA_MAGPIE_URL
-        string "Magpie gateway base URL"
-        default "https://magpie-direct.119932.xyz:42796"
+    config QUOTA_PLANS_URL
+        string "Agent plans summary base URL"
+        default "https://plans.119932.xyz"
         help
-            Base URL of the Magpie gateway, e.g. https://host:port
-            Leave empty to disable this source.
+            Origin without path — /api/v1/summary is appended. May point
+            at a LAN relay exposing the same path. Leave empty to disable.
 
-    config QUOTA_MAGPIE_KEY
-        string "Magpie gateway API key"
-        default ""
-        help
-            Bearer key for the Magpie gateway. Prefer setting it in
-            sdkconfig.defaults.local (not committed).
-
-    config QUOTA_CPAMGR_URL
-        string "cpamgr base URL"
-        default ""
-        help
-            Base URL of cpamgr, e.g. https://cpamgr.example.com
-            Leave empty to disable this source.
-
-    config QUOTA_CPAMGR_KEY
-        string "cpamgr management key"
-        default ""
-
-    config QUOTA_CPAMGR_BF_PATH
-        string "Second cpamgr instance relay path"
-        default ""
-        help
-            Extra path on the same relay host exposing a second cpamgr
-            instance, e.g. /quota-bf. Leave empty to disable.
-
-    config QUOTA_MAGPIE_EXCLUDE
-        string "Magpie providers to hide"
-        default ""
-        help
-            Comma-separated substrings matched (case-insensitive) against
-            provider names, e.g. "OpenCode Zen". Matching cards are hidden.
-
-    config QUOTA_CPAMGR_CF_ID
+    config QUOTA_PLANS_CF_ID
         string "Cloudflare Access service token client id"
         default ""
 
-    config QUOTA_CPAMGR_CF_SECRET
+    config QUOTA_PLANS_CF_SECRET
         string "Cloudflare Access service token client secret"
         default ""
+
+    config QUOTA_PLANS_TOKEN
+        string "Agent plans IoT bearer token"
+        default ""
+        help
+            Bearer token for the summary API. Set it in
+            sdkconfig.defaults.local — never commit the value.
+
+    config QUOTA_HIDE
+        string "Accounts to hide"
+        default ""
+        help
+            Comma-separated substrings matched (case-insensitive) against
+            card name, provider and id, e.g. "OpenCode Zen". Matching
+            entries are dropped.
 
     config QUOTA_REFRESH_SEC
         int "Refresh interval (seconds)"

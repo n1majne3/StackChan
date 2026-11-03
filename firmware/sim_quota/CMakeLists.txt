@@ -31,5 +31,5 @@ target_include_directories(quota_sim PRIVATE
 )
 # mirror sdkconfig.defaults.local so exclusion logic runs identically
 target_compile_definitions(quota_sim PRIVATE
-    CONFIG_QUOTA_MAGPIE_EXCLUDE="OpenCode Zen")
+    CONFIG_QUOTA_HIDE="OpenCode Zen")
 target_link_libraries(quota_sim PRIVATE lvgl SDL2::SDL2)
