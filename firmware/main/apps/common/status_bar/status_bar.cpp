@@ -480,6 +480,9 @@ private:
         if (!age.empty()) {
             _rowText(_makeRow(), "updated " + age + " ago", "");
         }
+        if (const char* why = quota::agent_refresh::waitingReason()) {
+            _rowText(_makeRow(), std::string("refresh waiting: ") + why, "");
+        }
     }
 
     lv_obj_t* _makeRow()

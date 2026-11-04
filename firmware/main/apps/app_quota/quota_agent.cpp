@@ -21,7 +21,7 @@
 #define CONFIG_QUOTA_AGENT_REFRESH_MIN 30
 #endif
 #ifndef CONFIG_QUOTA_AGENT_MIN_FREE_INTERNAL
-#define CONFIG_QUOTA_AGENT_MIN_FREE_INTERNAL 30720
+#define CONFIG_QUOTA_AGENT_MIN_FREE_INTERNAL 26624
 #endif
 
 namespace quota::agent_refresh {
@@ -33,6 +33,7 @@ constexpr uint32_t kStartupDelayMs = 90 * 1000;      // let boot-time OTA/activa
 constexpr uint32_t kRecheckMs      = 60 * 1000;      // conditions not met: look again later
 constexpr uint32_t kMaxWaitMs      = 5 * 60 * 1000;  // re-evaluate staleness at least this often
 constexpr uint32_t kRetryMs        = 10 * 60 * 1000; // after a failed fetch
+constexpr uint32_t kRelogMs        = 15 * 60 * 1000; // repeat an unchanged "waiting" log this often
 constexpr uint32_t kStackBytes     = 12 * 1024;      // in PSRAM; the TLS handshake runs on it
 constexpr size_t kMinLargestBlock  = 4096;
 constexpr int64_t kClockValidEpoch = 1700000000;
@@ -41,8 +42,9 @@ constexpr uint32_t kIntervalMs = (uint32_t)CONFIG_QUOTA_AGENT_REFRESH_MIN * 60u 
 
 // poll() runs on one thread (the agent UI task); the fetch task touches only
 // the atomics and the mutex-guarded block.
-bool s_started          = false;
-const char* s_last_why  = nullptr;
+bool s_started            = false;
+const char* s_last_why    = nullptr;  // why the due refresh is waiting, nullptr = not waiting
+uint32_t s_last_why_log_ms = 0;
 std::atomic<bool> s_busy{false};
 std::atomic<uint32_t> s_next_check_ms{0};
 
@@ -173,9 +175,15 @@ void poll()
     }
 
     if (const char* why = blocker()) {
-        if (why != s_last_why) {
-            mclog::tagInfo(_tag, "refresh due, waiting: {}", why);
-            s_last_why = why;
+        // Re-log periodically: a refresh can stay blocked for hours, and a
+        // single line at the start of that is easy to miss.
+        if (why != s_last_why || reached(now, s_last_why_log_ms + kRelogMs)) {
+            mclog::tagInfo(_tag, "refresh due, waiting: {} (internal heap free {}, largest block {}, need {})", why,
+                           heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                           heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                           CONFIG_QUOTA_AGENT_MIN_FREE_INTERNAL);
+            s_last_why        = why;
+            s_last_why_log_ms = now;
         }
         s_next_check_ms = now + kRecheckMs;
         return;
@@ -191,6 +199,11 @@ void poll()
         s_busy          = false;
         s_next_check_ms = now + kRetryMs;
     }
+}
+
+const char* waitingReason()
+{
+    return s_last_why;
 }
 
 bool takeUpdate(uint32_t& seen_revision, CachedSummary& out)

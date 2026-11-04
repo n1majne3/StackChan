@@ -1058,13 +1058,16 @@ menu "AI Quota"
 
     config QUOTA_AGENT_MIN_FREE_INTERNAL
         int "Agent refresh: minimum free internal RAM (bytes)"
-        default 30720
+        default 26624
         range 8192 131072
         help
             Skip an agent-mode refresh while free internal heap is below
             this. The fetch keeps its stack, TLS buffers and JSON tree in
             PSRAM, but socket and WiFi buffers still peak around 21KB of
-            internal RAM (measured on CoreS3); an idle agent has ~34KB
-            free. Each refresh logs heap before/after ("QuotaAgent").
+            internal RAM (measured on CoreS3). An idle agent has ~35KB
+            free before its first conversation and ~29KB after it, so the
+            limit must stay below ~29KB or refreshes stop after the first
+            conversation. Each refresh logs heap before/after, and a
+            blocked refresh logs why ("QuotaAgent").
 
 endmenu

@@ -27,6 +27,10 @@ namespace agent_refresh {
 
 void poll();
 
+/// Why a due refresh hasn't started ("low internal heap", "agent busy",
+/// "wifi down"), or nullptr when none is waiting. Call from the poll() thread.
+const char* waitingReason();
+
 /// If a refresh finished since `seen_revision`, copy it out and return true.
 bool takeUpdate(uint32_t& seen_revision, CachedSummary& out);
 
